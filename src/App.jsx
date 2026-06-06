@@ -7,6 +7,7 @@ const CheckIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" heigh
 const CopyIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>;
 const ArrowRight = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>;
 const XIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>;
+const ShieldAlertIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="M12 8v4"></path><path d="M12 16h.01"></path></svg>;
 
 const GlobalStyles = () => (
     <style>{`
@@ -84,6 +85,16 @@ const GlobalStyles = () => (
             border-color: rgba(249, 115, 22, 0.8);
             background: rgba(10, 10, 10, 0.9);
         }
+
+        /* UPGRADE: Custom Bot Error Animation */
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .bot-error-card {
+            animation: pulse-red 2s infinite;
+        }
     `}</style>
 );
 
@@ -93,6 +104,7 @@ export default function App() {
     const [loadingInfo, setLoadingInfo] = useState(false);
     const [videoInfo, setVideoInfo] = useState(null);
     const [error, setError] = useState('');
+    const [isBotError, setIsBotError] = useState(false); // UPGRADE: Bot error state
     
     // Download State
     const [downloading, setDownloading] = useState(false);
@@ -109,9 +121,8 @@ export default function App() {
     const [copySuccess, setCopySuccess] = useState(false);
 
     // DYNAMIC DOMAIN DETECTION
-    // ---> IMPORTANT: Replace the second string with your Render.com URL when deploying! <---
     const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const API_BASE = isLocalhost ? 'http://127.0.0.1:8000/api' : 'https://universal-extractor-backend.onrender.com/api';
+    const API_BASE = isLocalhost ? 'http://127.0.0.1:8000/api' : 'https://universal-extractor-backend.onrender.com/api'; // UPDATE YOUR RENDER URL
 
     // Polling logic for download progress
     useEffect(() => {
@@ -142,12 +153,23 @@ export default function App() {
         return () => clearInterval(interval);
     }, [taskId, finalFileReady, downloadStatus, API_BASE]);
 
+    // UPGRADE: Better Error Interception
+    const handleError = (dataDetail) => {
+        if (dataDetail === "BOT_BLOCKED") {
+            setIsBotError(true);
+            setError("YouTube's anti-bot system blocked the extraction. The server's datacenter IP is flagged.");
+        } else {
+            setIsBotError(false);
+            setError(`Extraction Error: ${dataDetail}`);
+        }
+    }
+
     const fetchInfo = async (e) => {
         e.preventDefault();
         if (!url) return;
         
         setLoadingInfo(true); setError(''); setVideoInfo(null);
-        setAiResults(null); setAiError(''); resetDownloadState();
+        setAiResults(null); setAiError(''); resetDownloadState(); setIsBotError(false);
 
         try {
             const response = await fetch(`${API_BASE}/info`, {
@@ -156,10 +178,15 @@ export default function App() {
                 body: JSON.stringify({ url })
             });
             const data = await response.json();
-            if (!response.ok) throw new Error(data.detail || 'Failed to fetch info');
+            
+            if (!response.ok) {
+                handleError(data.detail || 'Failed to fetch info');
+                return;
+            }
             setVideoInfo(data);
         } catch (err) {
-            setError(`Error: ${err.message}`);
+            setIsBotError(false);
+            setError(`Connection Error: Ensure your Render backend is awake.`);
         } finally {
             setLoadingInfo(false);
         }
@@ -183,10 +210,15 @@ export default function App() {
             });
             
             const data = await response.json();
-            if (!response.ok) throw new Error(data.detail || 'Failed to start task');
+            if (!response.ok) {
+                handleError(data.detail || 'Failed to start task');
+                resetDownloadState();
+                return;
+            }
             setTaskId(data.task_id);
         } catch (err) {
-            setError(err.message);
+            setIsBotError(false);
+            setError("Connection Error: Server failed to respond.");
             resetDownloadState();
         }
     };
@@ -295,11 +327,30 @@ export default function App() {
                             {loadingInfo ? <div className="animate-spin h-4 w-4 border-2 border-black border-t-transparent rounded-full"></div> : <>Analyze <ArrowRight /></>}
                         </button>
                     </form>
-                    {error && <div className="mt-4 p-4 text-center rounded-2xl bg-red-900/20 border border-red-500/30 font-code text-red-400 text-sm">{error}</div>}
+
+                    {/* UPGRADE: Bot Error Alert Card */}
+                    {error && (
+                        <div className={`mt-6 p-5 text-left rounded-2xl border font-code text-sm flex gap-4 ${isBotError ? 'bg-red-950/80 border-red-500/50 text-red-200 bot-error-card' : 'bg-red-900/20 border-red-500/30 text-red-400'}`}>
+                            <div className={`mt-0.5 ${isBotError ? 'text-red-400' : ''}`}>
+                                {isBotError ? <ShieldAlertIcon /> : <XIcon />}
+                            </div>
+                            <div>
+                                <h3 className={`font-bold text-base mb-1 ${isBotError ? 'text-red-400' : ''}`}>
+                                    {isBotError ? "YOUTUBE SECURITY FIREWALL TRIGGERED" : "EXTRACTION FAILED"}
+                                </h3>
+                                <p className="mb-2">{error}</p>
+                                {isBotError && (
+                                    <div className="bg-red-900/40 border border-red-500/20 p-3 rounded-lg mt-3 text-xs leading-relaxed">
+                                        <span className="font-bold text-red-300">ADMIN FIX REQUIRED:</span> You must export fresh YouTube cookies, encode them to Base64, and update the <span className="bg-black/50 px-1 py-0.5 rounded text-white">YOUTUBE_COOKIES_BASE64</span> Environment Variable in your Render dashboard.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* Results Area */}
-                {videoInfo && (
+                {videoInfo && !error && (
                     <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in-up" style={{animationDelay: '0.2s', animationFillMode: 'both'}}>
                         
                         {/* Card 1: Media Preview */}
